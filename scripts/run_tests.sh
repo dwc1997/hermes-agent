@@ -7,7 +7,7 @@
 #   * TZ=UTC, LANG=C.UTF-8, PYTHONHASHSEED=0 (deterministic)
 #   * Credential env vars blanked (conftest.py also does this, but this
 #     is belt-and-suspenders for anyone running `pytest` outside of
-#     our conftest path — e.g. calling pytest on a single file)
+#     our conftest path - e.g. calling pytest on a single file)
 #   * Proper venv activation
 #
 # Usage:
@@ -18,17 +18,17 @@
 
 set -euo pipefail
 
-# ── Locate repo root ────────────────────────────────────────────────────────
+# Locate repo root.
 # Works whether this is the main checkout or a worktree.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ── Activate venv ───────────────────────────────────────────────────────────
+# Activate venv.
 # Prefer a .venv in the current tree, fall back to the main checkout's venv
 # (useful for worktrees where we don't always duplicate the venv).
 VENV=""
 for candidate in "$REPO_ROOT/.venv" "$REPO_ROOT/venv" "$HOME/.hermes/hermes-agent/venv"; do
-  if [ -f "$candidate/bin/activate" ]; then
+  if [ -f "$candidate/bin/activate" ] || [ -f "$candidate/Scripts/activate" ]; then
     VENV="$candidate"
     break
   fi
@@ -39,15 +39,26 @@ if [ -z "$VENV" ]; then
   exit 1
 fi
 
-PYTHON="$VENV/bin/python"
+if [ -x "$VENV/bin/python" ]; then
+  PYTHON="$VENV/bin/python"
+elif [ -x "$VENV/Scripts/python.exe" ]; then
+  PYTHON="$VENV/Scripts/python.exe"
+else
+  echo "error: python executable not found under $VENV (checked bin/python and Scripts/python.exe)" >&2
+  exit 1
+fi
 
-# ── Ensure pytest-split is installed (required for shard-equivalent runs) ──
+# Ensure pytest plugins used by this wrapper are installed.
+if ! "$PYTHON" -c "import xdist" 2>/dev/null; then
+  echo "-> installing pytest-xdist into $VENV"
+  "$PYTHON" -m pip install --quiet "pytest-xdist>=3.6,<4"
+fi
 if ! "$PYTHON" -c "import pytest_split" 2>/dev/null; then
-  echo "→ installing pytest-split into $VENV"
+  echo "-> installing pytest-split into $VENV"
   "$PYTHON" -m pip install --quiet "pytest-split>=0.9,<1"
 fi
 
-# ── Hermetic environment ────────────────────────────────────────────────────
+# Hermetic environment.
 # Mirror what CI does in .github/workflows/tests.yml + what conftest.py does.
 # Unset every credential-shaped var currently in the environment.
 while IFS='=' read -r name _; do
@@ -78,20 +89,20 @@ export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export PYTHONHASHSEED=0
 
-# ── Worker count ────────────────────────────────────────────────────────────
+# Worker count.
 # CI uses `-n auto` on ubuntu-latest which gives 4 workers. A 20-core
 # workstation with `-n auto` gets 20 workers and exposes test-ordering
 # flakes that CI will never see. Pin to 4 so local matches CI.
 WORKERS="${HERMES_TEST_WORKERS:-4}"
 
-# ── Run pytest ──────────────────────────────────────────────────────────────
+# Run pytest.
 cd "$REPO_ROOT"
 
 # If the first argument starts with `-` treat all args as pytest flags;
 # otherwise treat them as test paths.
 ARGS=("$@")
 
-echo "▶ running pytest with $WORKERS workers, hermetic env, in $REPO_ROOT"
+echo "running pytest with $WORKERS workers, hermetic env, in $REPO_ROOT"
 echo "  (TZ=UTC LANG=C.UTF-8 PYTHONHASHSEED=0; all credential env vars unset)"
 
 # -o "addopts=" clears pyproject.toml's `-n auto` so our -n wins.
